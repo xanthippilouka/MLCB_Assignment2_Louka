@@ -19,7 +19,8 @@ features = ["age", "sex", "cp", "trestbps", "chol", "fbs", "restecg", "thalach",
 
 map_disease = {0:'No-Disease', 1:'Disease'}
 map_sex = {0:'Female', 1: 'Male'}
-mapp_cp = {0:'typical angina', 1:'atypical angina', 2: 'non-anginal pain', 3: 'asymptomatic'}
+map_cp = {0:'typical angina', 1:'atypical angina', 2: 'non-anginal pain', 3: 'asymptomatic'}
+map_fbs = {0:"False", 1: "True"}
 map_restecg = {0:'Normal', 1:'ST-T wave abnormality', 2: 'left ventricular hypertrophy'}
 map_slope = {0:'Upsloping', 1:'Flat', 2:';Downsloping'}
 map_thal = {3:'Normal', 6:'Fixed defect', 7: 'Reversible defect'}
