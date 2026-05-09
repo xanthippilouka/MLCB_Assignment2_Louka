@@ -7,3 +7,6 @@ scikit-learn
 feature-engine
 matplotlib-venn
 optuna
+xgboost
+lightgbm
+catboost
