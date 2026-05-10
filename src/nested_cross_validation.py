@@ -13,6 +13,7 @@ from sklearn.model_selection import GridSearchCV, RepeatedStratifiedKFold, cross
 from sklearn.metrics import (matthews_corrcoef, roc_auc_score, balanced_accuracy_score,f1_score, recall_score, precision_score, average_precision_score, confusion_matrix)
 import optuna
 import joblib
+from sklearn.base import clone
 
 
 class NestedCrossValidation:
@@ -61,6 +62,7 @@ class NestedCrossValidation:
             fold_metrics = []
 
             for train_index, test_index in outer_cv.split(self.X, self.y):
+                fold_model = clone(model)
                 X_train, X_test = self.X.iloc[train_index], self.X.iloc[test_index]
                 y_train, y_test = self.y.iloc[train_index], self.y.iloc[test_index]
 
@@ -68,12 +70,12 @@ class NestedCrossValidation:
 
                 if should_optimize and (name in self.param_space):
                     #Enter the Inner loop for Optuna tuning
-                    best_params = self.optuna(X_train, y_train, clone(model), self.param_space[name]) #clone : create a new, unfitted version of the model 
-                    model.set_params(**best_params)
+                    best_params = self.optuna(X_train, y_train, fold_model, self.param_space[name]) #clone : create a new, unfitted version of the model 
+                    fold_model.set_params(**best_params)
                 
                 #If not enter the inner loop for optimization, training and evaluation on the outer loop
                 #First apply preprocessing pipeline on training set only
-                pipeline = self.preprocessing_pipeline(model)
+                pipeline = self.preprocessing_pipeline(fold_model)
 
                 pipeline.fit(X_train, y_train)
 
@@ -102,9 +104,10 @@ class NestedCrossValidation:
                 X_train_inner, X_val_inner = X_train_outer.iloc[train_idx], X_train_outer.iloc[val_idx]
                 y_train_inner, y_val_inner = y_train_outer.iloc[train_idx], y_train_outer.iloc[val_idx]
 
-                test_model = estimator.set_params(**params) #set the parameters to the model, unpack the dictionary
-
-                pipeline_inner = self.preprocessing_pipeline(test_model)
+                trial_model = clone(estimator) 
+                trial_model.set_params(**params) #set the parameters to the model, unpack the dictionary
+                 
+                pipeline_inner = self.preprocessing_pipeline(trial_model)
                 pipeline_inner.fit(X_train_inner, y_train_inner)
                 y_pred_inner = pipeline_inner.predict(X_val_inner)
 
