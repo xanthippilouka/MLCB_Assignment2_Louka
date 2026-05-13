@@ -10,3 +10,4 @@ optuna
 xgboost
 lightgbm
 catboost
+shap

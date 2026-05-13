@@ -4,6 +4,7 @@
 import numpy as np
 import pandas as pd 
 import matplotlib.pyplot as plt
+import sklearn
 
 from sklearn.preprocessing import RobustScaler
 from sklearn.impute import SimpleImputer
@@ -13,7 +14,6 @@ from sklearn.model_selection import GridSearchCV, RepeatedStratifiedKFold, cross
 from sklearn.metrics import (matthews_corrcoef, roc_auc_score, balanced_accuracy_score,f1_score, recall_score, precision_score, average_precision_score, confusion_matrix)
 import optuna
 import joblib
-from sklearn.base import clone
 from sklearn.feature_selection import mutual_info_classif, SelectKBest
 from functools import partial
 
