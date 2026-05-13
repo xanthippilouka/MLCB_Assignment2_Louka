@@ -6,7 +6,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import sklearn
 
-from sklearn.preprocessing import RobustScaler
+from sklearn.preprocessing import RobustScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.base import clone
@@ -47,16 +48,36 @@ class NestedCrossValidation:
         
 
     #Function for handling the missing values, standardise scales
-    def preprocessing_pipeline(self, model):
-    
-        preprocessor = Pipeline(
-            steps=[
-                ('imputation', SimpleImputer(strategy="most_frequent")),
-                ('scaler', RobustScaler()),
-                ('clf', model)
-            ])
-        
-        return preprocessor
+    def preprocessing_pipeline(self, model, X):
+        current_qual = [col for col in self.qualitative if col in X.columns]
+        current_quant = [col for col in self.quantitative if col in X.columns]
+
+        #pipeline for Qualitative  features
+        cat_pipe = Pipeline(steps=[
+            ('impute', SimpleImputer(strategy="most_frequent")),
+            ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+        ])
+
+        #pipeline for Quantitative features
+        num_pipe = Pipeline(steps=[
+            ('impute', SimpleImputer(strategy="mean")), # 'mean' or 'median' is standard for numbers
+            ('scale', RobustScaler())
+        ])
+
+        #ColumnTransformer 
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ('cat', cat_pipe, current_qual),
+                ('num', num_pipe, current_quant)
+            ],
+            remainder='drop' 
+        )
+
+        #Final Pipeline: Preprocessor - Classifier
+        return Pipeline(steps=[
+            ('preprocessor', preprocessor),
+            ('clf', model)
+        ])
 
     def runcv(self):
         
@@ -113,7 +134,7 @@ class NestedCrossValidation:
                 
                 #If not enter the inner loop for optimization, training and evaluation on the outer loop
                 #First apply preprocessing pipeline on training set only
-                pipeline = self.preprocessing_pipeline(fold_model)
+                pipeline = self.preprocessing_pipeline(fold_model, X_train)
 
                 pipeline.fit(X_train, y_train)
 
@@ -158,7 +179,7 @@ class NestedCrossValidation:
                 trial_model = clone(estimator) 
                 trial_model.set_params(**params) #set the parameters to the model, unpack the dictionary
                  
-                pipeline_inner = self.preprocessing_pipeline(trial_model)
+                pipeline_inner = self.preprocessing_pipeline(trial_model, X_train_inner)
                 pipeline_inner.fit(X_train_inner, y_train_inner)
                 y_pred_inner = pipeline_inner.predict(X_val_inner)
 
@@ -187,16 +208,6 @@ class NestedCrossValidation:
             'Specificity': specificity
             }
     
-    def save_model(self, model_name, X_full, y_full, filename):
-        #Save the model with the best hyperparameters if tuned or baseline models
-        for name, model in self.estimators:
-            if name==model_name:
-                #Save thee full pipeline not just the model (mathemtics)
-                full_pipe = self.preprocessing_pipeline(model)
-                full_pipe.fit(X_full, y_full) #Fit on the entire development set, only the winner algorithm
-                #Save the full pipeline
-                joblib.dump(full_pipe, filename)
-                print(f"Complete pipeline for {model_name} saved successfully")
 
        
 #Function for Bootstrap

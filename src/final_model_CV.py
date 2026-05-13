@@ -6,7 +6,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import sklearn
 from sklearn.base import clone
-from sklearn.preprocessing import RobustScaler
+from sklearn.preprocessing import RobustScaler, OneHotEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import StratifiedKFold,  cross_val_score
@@ -28,6 +28,9 @@ class CrossValidation:
         self.n_folds = n_folds
         self.seed = seed
 
+        self.quantitative = ["age", "trestbps", "chol", "thalach", "oldpeak"]
+        self.qualitative = ["sex", "cp", "fbs", "restecg", "exang", "slope", "thal", "ca"]
+
         self.X = data.drop(columns=[self.target])
         self.y= data[self.target]
 
@@ -36,25 +39,37 @@ class CrossValidation:
 
     #Function for handling the missing values, standardise scales (only on training data)
     #It is fixed only for the selected features for my model
-    def preprocessing_pipeline(self, model):
+    def preprocessing_pipeline(self, model, X):
+        #Identify which features from the master lists are actually in X
+        current_qual = [col for col in self.qualitative if col in X.columns]
+        current_quant = [col for col in self.quantitative if col in X.columns]
 
-        selected_feat = ["cp", "thal", "ca", "exang", "slope", "thalach", "oldpeak"]
-        selector = ColumnTransformer(
+        #Qualitative Pathway
+        cat_pipe = Pipeline(steps=[
+            ('impute', SimpleImputer(strategy="most_frequent")),
+            ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+        ])
+
+        #Quantitative Pathway
+        num_pipe = Pipeline(steps=[
+            ('impute', SimpleImputer(strategy="mean")),
+            ('scale', RobustScaler())
+        ])
+
+        preprocessor = ColumnTransformer(
             transformers=[
-                ('selector', 'passthrough', selected_feat)
+                ('cat', cat_pipe, current_qual),
+                ('num', num_pipe, current_quant)
             ],
-            remainder='drop' 
+            remainder='drop'
         )
+
+        #Return the full pipeline
+        return Pipeline(steps=[
+            ('preprocessor', preprocessor),
+            ('clf', model)
+        ])
    
-        preprocessor = Pipeline(
-            steps=[
-                ('feature_selection', selector), 
-                ('imputation', SimpleImputer(strategy="most_frequent")),
-                ('scaler', RobustScaler()),
-                ('clf', model)
-            ])
-        
-        return preprocessor
 
     #Apply again Optuna for hyperparameters tuning to be consistent with the previous steps
     def optuna(self, X, y, estimator, param_space):
@@ -66,7 +81,7 @@ class CrossValidation:
             trial_model = clone(estimator) #clone the estimator so it is untrained in every trial
             trial_model.set_params(**params) 
             
-            pipeline = self.preprocessing_pipeline(trial_model)
+            pipeline = self.preprocessing_pipeline(trial_model, X)
             scores = cross_val_score(pipeline, X, y, cv=cv, scoring='f1_weighted')
             return scores.mean()
         
@@ -94,7 +109,7 @@ class CrossValidation:
                 final_model = clone(model)
                 final_model.set_params(**best_params)
                 
-                pipeline = self.preprocessing_pipeline(final_model)
+                pipeline = self.preprocessing_pipeline(final_model, X_train)
                 pipeline.fit(X_train, y_train)
                 
                 y_pred = pipeline.predict(X_val)
@@ -135,7 +150,7 @@ class CrossValidation:
                 final_model = clone(model)
                 final_model.set_params(**best_params)
 
-                full_pipe = self.preprocessing_pipeline(final_model)
+                full_pipe = self.preprocessing_pipeline(final_model, self.X)
                 full_pipe.fit(self.X, self.y) #Fit on the entire  set, only the winner algorithm
                 #Save the full pipeline
                 joblib.dump(full_pipe, filename)
@@ -147,54 +162,46 @@ class CrossValidation:
         pipeline = joblib.load(model_path)
 
         #Seperate the steps of the pipeline
-        preprocessor = Pipeline(steps=pipeline.steps[:-1])
+        preprocessor = pipeline.named_steps['preprocessor']
         model = pipeline.named_steps['clf']
     
         #Proprocess the raw data
         X_scaled = preprocessor.transform(self.X)
-        selected_feat = ["cp", "thal", "ca", "exang", "slope", "thalach", "oldpeak"]
-        X_scaled_df = pd.DataFrame(X_scaled, columns=selected_feat)
+        feature_names = preprocessor.get_feature_names_out()
+        X_scaled_df = pd.DataFrame(X_scaled, columns=feature_names)
 
-        #Initialize the Explainer with Background, Kernel SHAP needs a baseline to compare against, 
+        #Initialize the Explainer with Background, Kernel SHAP needs a baseline to compare against,
+        predict_pos_class = lambda x: model.predict_proba(x)[:, 1] 
         background = shap.kmeans(X_scaled_df, 5) #Use a clustering algorithm to summarize the dataset into 5 representative synthetics patients- average probability of heart disease across the entire dataset
-        explainer = shap.KernelExplainer(model.predict_proba, background) #model-agnostic method
+        explainer = shap.KernelExplainer(predict_pos_class, background) #model-agnostic method
         
-        #Calculate SHAP values for the positive class (patients)
-        shap_vals = explainer.shap_values(X_scaled_df)
+        #Calculate SHAP values
+        actual_shap_values = explainer.shap_values(X_scaled_df)
+
+        base_values_array = np.tile(explainer.expected_value, len(X_scaled_df))
         
-
-        #Handle the 3D shape (patients, features, classes)
-        if isinstance(shap_vals, list):
-            # If SHAP returns a list of arrays, take the second one (Class 1)
-            actual_shap_values = shap_vals[1]
-        elif len(shap_vals.shape) == 3:
-            # If it's a 3D numpy array, slice it to get Class 1: [all patients, all features, index 1]
-            actual_shap_values = shap_vals[:, :, 1]
-        else:
-            # It's already 2D
-            actual_shap_values = shap_vals
-
         #Save SHAP values to CSV
-        shap_df = pd.DataFrame(actual_shap_values, columns=selected_feat)
+        shap_df = pd.DataFrame(actual_shap_values, columns=feature_names)
         shap_df.to_csv(filename, index=False)
         print(f"SHAP values saved")
 
+        #Create Explanation object 
         explanation = shap.Explanation(
-        values=actual_shap_values, 
-        base_values=explainer.expected_value[1], 
-        data=X_scaled_df, 
-        feature_names=selected_feat
-    )
+            values=actual_shap_values, 
+            base_values=base_values_array, 
+            data=X_scaled_df, 
+            feature_names=feature_names
+        )
 
         #Summary Bar Plot -Shows the average absolute impact of each feature
         plt.figure()
-        shap.plots.bar(explanation, show=False)
-        plt.title(f"Global Feature Importance (Mean |SHAP|)")
+        shap.plots.bar(explanation, max_display=25, show=False)
+        plt.title(f"Global Feature Importance")
         plt.savefig("../figures/Task5/global_importance_bar.png", bbox_inches='tight')
 
         #Beeswarm Plot -Shows the impact (X-axis) and the feature value (color: red=high, blue=low)
         plt.figure()
-        shap.plots.beeswarm(explanation, show=False)
+        shap.plots.beeswarm(explanation, max_display=25, show=False)
         plt.title(f"Global Impact Distribution (Beeswarm)")
         plt.savefig("../figures/Task5/global_impact_beeswarm.png", bbox_inches='tight')
 

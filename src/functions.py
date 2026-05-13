@@ -9,8 +9,9 @@ import seaborn as sns
 from scipy import stats
 from scipy.stats import shapiro, ttest_ind, mannwhitneyu, chi2_contingency
 from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.impute import SimpleImputer
+from sklearn.compose import ColumnTransformer
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -154,8 +155,17 @@ class FeatureAnalysis:
             print(f"{col:<12} | {'Chi-Square':<15} | {p_val:<10.4f} | {significance}")
 
     def correlation_analysis(self, plot_name=None):
-        #Use Spearman Correlation (non-parametric)
-        corr = self.new_df.corr(method ='spearman')
+
+        df_encoded = self.new_df.copy()
+        qual_cols = ["sex", "cp", "fbs", "restecg", "exang", "slope", "thal", "ca"]
+        
+        for col in qual_cols:
+            if col in df_encoded.columns:
+                df_encoded[col] = df_encoded[col].astype('category').cat.codes
+        
+        #Use Spearman Correlation (Ideal for mixed data types) (non-parametric)
+        corr = df_encoded.corr(method='spearman')
+        
         mask = np.triu(np.ones_like(corr, dtype=bool))
         #plot with heatmap
         sns.heatmap(corr, mask=mask, annot=True, fmt=".2f", cmap='coolwarm', center=0, annot_kws={"size":7})
@@ -166,27 +176,49 @@ class FeatureAnalysis:
         
         plt.show()
 
-    def apply_pca(self, plot_name=None):
-        #PCA requires standard scaling
-        X = self.new_df.drop(columns=[self.target])
-        X_scaled = StandardScaler().fit_transform(X)
+def apply_pca(self, plot_name=None):
+    
+    qual_cols = ["sex", "cp", "fbs", "restecg", "exang", "slope", "thal", "ca"]
+    quant_cols = ["age", "trestbps", "chol", "thalach", "oldpeak"]
+    
+    X = self.new_df.drop(columns=[self.target])
+    
+    #Preprocessing for PCA
+    #StandardScaler and OneHotEncoder
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('cat', OneHotEncoder(sparse_output=False), qual_cols),
+            ('num', StandardScaler(), quant_cols)
+        ]
+    )
+    
+    # Transform the data
+    X_transformed = preprocessor.fit_transform(X)
 
-        pca = PCA(n_components=2)
-        X_pca = pca.fit_transform(X_scaled)
-        var = pca.explained_variance_ratio_
+    #Apply PCA
+    pca = PCA(n_components=2)
+    X_pca = pca.fit_transform(X_transformed)
+    var = pca.explained_variance_ratio_
 
-        plt.figure(figsize=(10,6))
-        sns.scatterplot(x=X_pca[:,0], y=X_pca[:,1], hue=self.new_df[self.target], palette='Set1', s=60)
-        plt.title(f"PCA (Total Variance Explained: {sum(var):.2%})")
-        plt.xlabel(f"PC1 ({var[0]:.2%})")
-        plt.ylabel(f"PC2 ({var[1]:.2%})")
-
-        if plot_name:
-            plt.savefig(f'../figures/Task1/{plot_name}', dpi=300, bbox_inches='tight')
-        
-        plt.show()
-
-
+    #Visualization
+    plt.figure(figsize=(10, 6))
+    sns.scatterplot(
+        x=X_pca[:, 0], 
+        y=X_pca[:, 1], 
+        hue=self.new_df[self.target], 
+        palette='Set1', 
+        s=60,
+        alpha=0.8
+    )
+    
+    plt.title(f"PCA: Full Feature Set (Variance Explained: {sum(var):.2%})")
+    plt.xlabel(f"PC1 ({var[0]:.2%})")
+    plt.ylabel(f"PC2 ({var[1]:.2%})")
+    
+    if plot_name:
+        plt.savefig(f'../figures/Task1/{plot_name}', dpi=300, bbox_inches='tight')
+    plt.show()
+    
 
 
     

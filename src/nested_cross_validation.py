@@ -5,7 +5,8 @@ import numpy as np
 import pandas as pd 
 import matplotlib.pyplot as plt
 
-from sklearn.preprocessing import RobustScaler
+from sklearn.preprocessing import RobustScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.base import clone
@@ -24,7 +25,7 @@ class NestedCrossValidation:
         self.target='num'
         self.quantitative = ["age",  "trestbps", "chol",  "thalach", "oldpeak"]
         self.qualitative = [ "sex", "cp", "fbs", "restecg", "exang", "slope", "thal", "ca"]
-
+       
         self.estimators = estimators
         self.param_space = parameter_space
         
@@ -41,16 +42,34 @@ class NestedCrossValidation:
 
     #Function for handling the missing values, standardise scales
     def preprocessing_pipeline(self, model):
-    
-        preprocessor = Pipeline(
-            steps=[
-                ('imputation', SimpleImputer(strategy="most_frequent")),
-                ('scaler', RobustScaler()),
-                ('clf', model)
-            ])
-        
-        return preprocessor
 
+        #pipeline for Qualitative  features
+        cat_pipe = Pipeline(steps=[
+            ('impute', SimpleImputer(strategy="most_frequent")),
+            ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+        ])
+
+        #pipeline for Quantitative features
+        num_pipe = Pipeline(steps=[
+            ('impute', SimpleImputer(strategy="mean")), # 'mean' or 'median' is standard for numbers
+            ('scale', RobustScaler())
+        ])
+
+        #ColumnTransformer 
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ('cat', cat_pipe, self.qualitative),
+                ('num', num_pipe, self.quantitative)
+            ],
+            remainder='drop' # Drops any features not in your lists
+        )
+
+        # 4. Final Pipeline: Preprocessor -> Classifier
+        return Pipeline(steps=[
+            ('preprocessor', preprocessor),
+            ('clf', model)
+        ])
+    
     def runcv(self):
         
         #Use RepeatedStratifiedKFold to ensure proper class imbalance handling
